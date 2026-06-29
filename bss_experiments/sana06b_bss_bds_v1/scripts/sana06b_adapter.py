@@ -5,6 +5,7 @@ import inspect
 import os
 import sys
 import time
+import types
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,194 @@ from common import (  # noqa: E402
     validate_schedule_payload,
     write_json,
 )
+
+
+def _install_mmcv_registry_fallback() -> None:
+    try:
+        import mmcv  # noqa: F401
+        from mmcv.runner import get_dist_info as _get_dist_info  # noqa: F401
+        from mmcv.utils.logging import logger_initialized as _logger_initialized  # noqa: F401
+        return
+    except (ImportError, ModuleNotFoundError):
+        for module_name in ["mmcv", "mmcv.utils", "mmcv.utils.logging", "mmcv.runner"]:
+            sys.modules.pop(module_name, None)
+
+    mmcv_mod = types.ModuleType("mmcv")
+    mmcv_mod.__path__ = []
+
+    class Config(dict):
+        def __init__(self, cfg_dict=None, **kwargs):
+            super().__init__()
+            data = {}
+            if cfg_dict:
+                data.update(dict(cfg_dict))
+            data.update(kwargs)
+            for key, value in data.items():
+                self[key] = self._wrap(value)
+
+        @staticmethod
+        def _wrap(value):
+            if isinstance(value, dict) and not isinstance(value, Config):
+                return Config(value)
+            if isinstance(value, list):
+                return [Config._wrap(item) for item in value]
+            return value
+
+        def __getattr__(self, name):
+            try:
+                return self[name]
+            except KeyError as exc:
+                raise AttributeError(name) from exc
+
+        def __setattr__(self, name, value):
+            self[name] = self._wrap(value)
+
+        def merge_from_dict(self, options):
+            for key, value in dict(options).items():
+                self[key] = self._wrap(value)
+
+        @classmethod
+        def fromfile(cls, filename):
+            import yaml
+
+            with open(filename, encoding="utf-8") as handle:
+                data = yaml.safe_load(handle) or {}
+            return cls(data)
+
+    class Registry:
+        def __init__(self, name, *args, **kwargs):
+            self.name = name
+            self.module_dict = {}
+            self._module_dict = self.module_dict
+
+        def __contains__(self, key):
+            return key in self.module_dict
+
+        def get(self, key):
+            return self.module_dict.get(key)
+
+        def register_module(self, module=None, name=None, force=False):
+            def _register(cls):
+                module_name = name or cls.__name__
+                if not force and module_name in self.module_dict:
+                    raise KeyError(f"{module_name} is already registered in {self.name}")
+                self.module_dict[module_name] = cls
+                return cls
+
+            if module is not None:
+                return _register(module)
+            return _register
+
+        def build(self, cfg, default_args=None):
+            return build_from_cfg(cfg, self, default_args=default_args)
+
+    def build_from_cfg(cfg, registry, default_args=None):
+        if cfg is None:
+            raise TypeError("cfg must not be None")
+        if isinstance(cfg, str):
+            cfg = {"type": cfg}
+        elif hasattr(cfg, "to_dict"):
+            cfg = cfg.to_dict()
+        else:
+            cfg = dict(cfg)
+        args = dict(default_args or {})
+        args.update({k: v for k, v in cfg.items() if k != "type"})
+        obj_type = cfg.get("type")
+        if isinstance(obj_type, str):
+            obj_cls = registry.get(obj_type)
+            if obj_cls is None:
+                raise KeyError(f"{obj_type} is not registered in {registry.name}")
+        else:
+            obj_cls = obj_type
+        return obj_cls(**args)
+
+    def mkdir_or_exist(dir_name):
+        Path(dir_name).mkdir(parents=True, exist_ok=True)
+
+    def dump(obj, file):
+        import pickle
+
+        with open(file, "wb") as handle:
+            pickle.dump(obj, handle)
+
+    def load(file):
+        import pickle
+
+        with open(file, "rb") as handle:
+            return pickle.load(handle)
+
+    mmcv_mod.Config = Config
+    mmcv_mod.Registry = Registry
+    mmcv_mod.build_from_cfg = build_from_cfg
+    mmcv_mod.mkdir_or_exist = mkdir_or_exist
+    mmcv_mod.dump = dump
+    mmcv_mod.load = load
+
+    utils_mod = types.ModuleType("mmcv.utils")
+    try:
+        from torch.nn.modules.batchnorm import _BatchNorm
+        from torch.nn.modules.instancenorm import _InstanceNorm
+    except Exception:
+        _BatchNorm = tuple()
+        _InstanceNorm = tuple()
+    utils_mod._BatchNorm = _BatchNorm
+    utils_mod._InstanceNorm = _InstanceNorm
+
+    logging_mod = types.ModuleType("mmcv.utils.logging")
+    logging_mod.logger_initialized = {}
+    utils_mod.logging = logging_mod
+
+    runner_mod = types.ModuleType("mmcv.runner")
+    runner_mod.OPTIMIZERS = Registry("optimizer")
+    runner_mod.OPTIMIZER_BUILDERS = Registry("optimizer builder")
+
+    class DefaultOptimizerConstructor:
+        def __init__(self, optimizer_cfg, paramwise_cfg=None):
+            self.optimizer_cfg = dict(optimizer_cfg or {})
+            self.paramwise_cfg = paramwise_cfg or {}
+            self.base_lr = self.optimizer_cfg.get("lr")
+            self.base_wd = self.optimizer_cfg.get("weight_decay")
+
+        def __call__(self, model):
+            return build_optimizer(model, self.optimizer_cfg)
+
+        def add_params(self, params, module, prefix="", is_dcn_module=None):
+            params.extend({"params": [param], "name": name} for name, param in module.named_parameters(recurse=False))
+
+        @staticmethod
+        def _is_in(param_group, params):
+            target = set(param_group.get("params", []))
+            return any(bool(target.intersection(set(group.get("params", [])))) for group in params)
+
+    def get_dist_info():
+        try:
+            import torch
+
+            if torch.distributed.is_available() and torch.distributed.is_initialized():
+                return torch.distributed.get_rank(), torch.distributed.get_world_size()
+        except Exception:
+            pass
+        return 0, 1
+
+    def build_optimizer(model, optimizer_cfg):
+        import torch
+
+        cfg = dict(optimizer_cfg or {})
+        opt_type = cfg.pop("type", "AdamW")
+        opt_cls = getattr(torch.optim, opt_type) if isinstance(opt_type, str) else opt_type
+        return opt_cls(model.parameters(), **cfg)
+
+    runner_mod.DefaultOptimizerConstructor = DefaultOptimizerConstructor
+    runner_mod.get_dist_info = get_dist_info
+    runner_mod.build_optimizer = build_optimizer
+    mmcv_mod.utils = utils_mod
+    mmcv_mod.runner = runner_mod
+
+    sys.modules["mmcv"] = mmcv_mod
+    sys.modules["mmcv.utils"] = utils_mod
+    sys.modules["mmcv.utils.logging"] = logging_mod
+    sys.modules["mmcv.runner"] = runner_mod
+
 
 
 class Sana06BAdapter:
@@ -159,6 +348,7 @@ class Sana06BAdapter:
     def _load_native_pipeline(self):
         if str(self.repo_root) not in sys.path:
             sys.path.insert(0, str(self.repo_root))
+        _install_mmcv_registry_fallback()
         from app.sana_pipeline import SanaPipeline
 
         checkpoint = self._resolve_native_checkpoint()
