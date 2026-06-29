@@ -1,0 +1,858 @@
+可以。Sana-0.6B 我觉得适合先做 **T2I sanity / low-cost stress test**。Sana 官方仓库是一个完整的 high-resolution image/video generation codebase，里面有 `app/`、`configs/`、`diffusion/`、`sana/`、`scripts/` 等目录；README 的性能表也把 Sana-0.6B 列成 0.6B 参数、1024px 图像生成、低延迟模型。官方 README 还显示 Sana 已经支持 diffusers 的 `SanaPipeline`，但 0.6B 的 Hugging Face model card 更偏 native Sana pipeline 用法，所以这次 prompt 里我会要求 Codex **先 audit：优先用 native Sana pipeline 跑 0.6B；如果 diffusers 0.6B 路径可用，再用 diffusers 简化实现**。([GitHub][1])
+
+另外你说的工程方式很对：**GitHub 仓库只放代码、patch、notebook、表格脚本；权重、输出图像、运行结果放 Google Drive；Colab notebook 负责拉代码、挂载 Drive、软链接权重、跑实验。**
+
+下面这份可以直接发给 Codex。
+
+````text
+You are working on a new Model D experiment for our BSS/BDS project.
+
+Target:
+Sana-0.6B / Sana 600M T2I model from NVlabs/Sana.
+
+Official repo:
+https://github.com/NVlabs/Sana
+
+Primary model candidate:
+Efficient-Large-Model/Sana_600M_1024px
+
+Scientific goal:
+Run a lightweight text-to-image BSS/BDS sanity experiment on Sana-0.6B to test whether our boundary compute allocation policy transfers from video/relighting to image generation.
+
+Important project engineering rule:
+- Code lives in GitHub / local repo.
+- Large weights, generated images, metrics outputs, and experiment artifacts live on Google Drive.
+- The Colab notebook should clone/pull GitHub code into `/content`, mount Drive, locate weights from Drive, and run the experiment.
+- Do NOT commit model weights, generated images, or large outputs to GitHub.
+- Do NOT train anything.
+- Do NOT modify model weights.
+- Do NOT use Sana-Sprint / one-step / few-step distilled models for this experiment.
+- This experiment is Sana-0.6B only.
+
+Why Sana-0.6B:
+- It is a small/efficient Linear Diffusion Transformer T2I model.
+- It is suitable for a quick BSS/BDS T2I sanity check.
+- It is not the Sana-Sprint few-step distilled model.
+- We want to know whether Sana-0.6B is Green, Low-only, Reject, or Need-more-data under BDS.
+
+Current paper table format:
+Model | Setting | Few-step prior | Ref. | Cases | BDS | Low | Middle Low | Middle High | High | Mean Δ | Win
+
+For Sana-0.6B:
+- Model = Sana-0.6B
+- Setting = Image Generation
+- Few-step prior = None / not explicit, unless audit shows otherwise
+- Ref. = reference NFE chosen by official/default run, preferably 50 if feasible
+- Cases = fixed prompt suite count
+- BDS = Green / Low-only / Reject / Need more data
+- RGB cells report:
+  BSS RGB-L1 closure / Δ vs uniform [actual NFE]
+
+BSS definition:
+For target actual NFE T:
+- construct the official base schedule with T-2 steps;
+- split the first interval;
+- split the last interval;
+- run exactly T model evaluations.
+
+Examples:
+- bss10 = base8 + split first/last
+- bss20 = base18 + split first/last
+- bss30 = base28 + split first/last
+- bss40 = base38 + split first/last
+
+BSS-T is NOT uniform-T.
+BSS is teacher-free at inference.
+Reference output is used only for metrics.
+
+BDS definition:
+For each prompt/case c and exact NFE T:
+gain(c,T) = rgb_l1_closure_BSS(c,T) - rgb_l1_closure_uniform(c,T)
+
+BDS_low:
+- Tset = {10}
+
+BDS_all:
+- preferred Tset = {10,20,30,40}
+- if runtime too high, use {10,20,40} and mark Middle High missing
+
+BDS verdict:
+- Green if BDS_all bootstrap LCB95 > 0
+- Low-only if BDS_low LCB95 > 0 and BDS_all LCB95 <= 0
+- Reject if BDS_low LCB95 <= 0
+- Need more data if prompt count too small or CIs too wide
+
+============================================================
+PHASE 0 — Create branch/folder and audit official Sana structure
+============================================================
+
+Create or switch to a new branch:
+
+`sana06b-bss-bds`
+
+Do not push unless asked.
+
+Create local experiment code folder inside the repo:
+
+`bss_experiments/sana06b_bss_bds_v1/`
+
+with:
+- reports/
+- tables/
+- metrics/
+- figures/
+- schedules/
+- manifests/
+- logs/
+- scripts/
+- patches/
+- splits/
+- prompt_suites/
+- notebooks/
+
+Create:
+
+`reports/00_repo_model_hardware_audit.md`
+
+Audit:
+- current repo path
+- git remote
+- current branch
+- commit hash
+- dirty status
+- Python version
+- PyTorch version
+- CUDA version
+- `nvidia-smi`
+- GPU name and VRAM
+- whether running in Colab
+- whether Drive is mounted
+- whether Sana official repo exists locally
+- whether `app/sana_pipeline.py` exists
+- whether `configs/sana_config/1024ms/Sana_600M_img1024.yaml` exists
+- whether `configs/sana_config/1024ms/Sana_1600M_img1024.yaml` exists
+- whether diffusers SanaPipeline is installed and usable
+- whether `diffusers>=0.32.0` is installed
+- whether native Sana pipeline can import:
+  `from app.sana_pipeline import SanaPipeline`
+- whether HF / Drive weights for Sana_600M_1024px exist
+- exact path to Drive weights if present
+
+Important audit note:
+The official Sana README lists Sana-0.6B as a 0.6B 1024px image model, but the Hugging Face model card may contain inconsistent or generic wording. Do not assume config/checkpoint mapping blindly.
+Verify:
+- model repo id
+- local config path
+- actual model architecture string
+- whether `Sana_600M_img1024.yaml` works with `Efficient-Large-Model/Sana_600M_1024px`
+- if the model card example uses a different config, document it and test safely.
+
+Write a clear table:
+
+| Item | Found? | Path / Evidence | Notes | Action |
+
+If weights are missing:
+- do not run experiments;
+- write exact commands to download weights to Google Drive, for example using `huggingface-cli download`;
+- do not download to the GitHub repo.
+
+============================================================
+PHASE 1 — Colab notebook workflow
+============================================================
+
+Create:
+
+`notebooks/sana06b_colab_bss_bds.ipynb`
+
+This notebook should be the primary user-facing runner.
+
+Notebook requirements:
+
+1. Mount Drive:
+```python
+from google.colab import drive
+drive.mount("/content/drive")
+````
+
+2. Define editable paths:
+
+```python
+GITHUB_REPO_URL = "https://github.com/<YOUR_ORG_OR_USER>/<YOUR_SANA_BSS_REPO>.git"
+BRANCH = "sana06b-bss-bds"
+REPO_ROOT = "/content/Sana-BSS"
+SANA_UPSTREAM_ROOT = "/content/Sana"
+DRIVE_ROOT = "/content/drive/MyDrive/Colab_Projects/Sana-BSS-BDS"
+DRIVE_WEIGHTS_ROOT = "/content/drive/MyDrive/ModelWeights/Sana"
+EXPERIMENT_ROOT = "/content/Sana-BSS-Runs/sana06b_bss_bds_v1"
+DRIVE_EXPERIMENT_ROOT = "/content/drive/MyDrive/Colab_Projects/Sana-BSS-BDS/sana06b_bss_bds_v1"
+```
+
+3. Clone/pull code:
+
+* clone our BSS experiment repo to `REPO_ROOT`
+* clone official NVlabs/Sana to `SANA_UPSTREAM_ROOT` if not already present
+* checkout expected branch
+* print git commit/status for both repos
+
+4. Install environment:
+
+* first try official `environment_setup.sh sana` if appropriate;
+* otherwise install minimal dependencies:
+
+  * torch already provided by Colab
+  * diffusers>=0.32.0 if using diffusers route
+  * transformers
+  * accelerate
+  * safetensors
+  * sentencepiece
+  * huggingface_hub
+  * opencv-python
+  * imageio
+  * pandas
+  * numpy
+  * pillow
+  * matplotlib
+* Do not reinstall CUDA/PyTorch unnecessarily unless needed.
+
+5. Weight handling:
+
+* do not put weights in repo;
+* locate Drive weights at:
+  `DRIVE_WEIGHTS_ROOT/Sana_600M_1024px`
+  or another audited folder;
+* if missing, optionally provide a cell with:
+  `huggingface-cli download Efficient-Large-Model/Sana_600M_1024px --local-dir "$DRIVE_WEIGHTS_ROOT/Sana_600M_1024px"`
+* create symlinks from Sana expected cache/checkpoint folder to Drive weights only if needed.
+
+6. Run audit:
+
+```bash
+python bss_experiments/sana06b_bss_bds_v1/scripts/audit_sana06b.py
+```
+
+7. Run smoke:
+
+```bash
+python bss_experiments/sana06b_bss_bds_v1/scripts/run_manifest.py \
+  --manifest "$EXPERIMENT_ROOT/manifests/sana06b_smoke_manifest.csv" \
+  --resume \
+  --sync_drive
+```
+
+8. Run mini-suite only after smoke passes.
+
+Notebook must not run the full mini-suite by default unless `RUN_MINI_SUITE=True`.
+
+============================================================
+PHASE 2 — Choose implementation path: native Sana first, diffusers fallback
+===========================================================================
+
+Implement two possible backends if feasible.
+
+Backend A: native Sana pipeline
+
+* Use `app.sana_pipeline.SanaPipeline`
+* Use config:
+  `configs/sana_config/1024ms/Sana_600M_img1024.yaml`
+  unless audit proves another config is required
+* Use checkpoint:
+  `Efficient-Large-Model/Sana_600M_1024px`
+  loaded from Drive or HF cache
+* This is likely the safest route for 0.6B because the HF model card example uses native Sana pipeline.
+
+Backend B: diffusers SanaPipeline
+
+* Use `diffusers.SanaPipeline` only if the Sana-0.6B diffusers model is available and loadable
+* If diffusers route is not available for 0.6B, do not force it
+* Document reason and use native backend
+
+Create unified adapter:
+
+`scripts/sana06b_adapter.py`
+
+Required class:
+
+```python
+class Sana06BAdapter:
+    def __init__(self, backend, repo_root, weights_dir, config_path, device, dtype):
+        ...
+
+    def load_pipeline(self):
+        ...
+
+    def get_official_base_schedule(self, num_inference_steps, **kwargs):
+        ...
+
+    def build_uniform_schedule(self, actual_nfe, **kwargs):
+        ...
+
+    def build_bss_schedule(self, actual_nfe, split_pairs=(0, -1), **kwargs):
+        ...
+
+    def run_one_case(self, manifest_row):
+        ...
+
+    def dump_schedule_json(self, manifest_row, schedule_payload):
+        ...
+
+    def validate_outputs(self, manifest_row):
+        ...
+```
+
+============================================================
+PHASE 3 — BSS schedule control
+==============================
+
+Goal:
+Add BSS schedule support without changing model weights or prompt conditioning.
+
+Important:
+Sana uses Flow-DPM-Solver / flow-matching scheduler logic. Audit the actual coordinate used by native or diffusers pipeline:
+
+* timesteps
+* sigmas
+* flow time
+* scheduler-specific internal coordinate
+
+Implement BSS in the same coordinate space used by the official sampler.
+Record coordinate type in schedule JSON.
+
+If scheduler injection is difficult:
+
+* do not hack model internals blindly;
+* create a minimal custom scheduler wrapper;
+* preserve official uniform behavior exactly;
+* document every modified file in `patches/sana06b_bss_schedule.patch`.
+
+Required CLI args / manifest fields:
+
+* sampler_mode: uniform / bss
+* actual_nfe
+* base_sample_steps
+* split_pairs = 0,-1
+* dump_schedule_json
+* num_inference_steps for uniform
+* guidance_scale
+* pag_guidance_scale if used
+* height
+* width
+* seed
+* prompt
+* backend = native / diffusers
+* scheduler_name
+* flow_shift if applicable
+
+Schedule JSON must include:
+
+* model_id = Sana-0.6B
+* model_variant = Sana_600M_1024px
+* task = t2i
+* backend
+* method
+* sampler_mode
+* actual_nfe
+* base_sample_steps
+* num_inference_steps
+* split_pairs
+* reference_method = reference_uniform50
+* reference_nfe = 50
+* coordinate_type
+* base_coords
+* final_coords
+* inserted_midpoints
+* seed
+* prompt_hash
+* height
+* width
+* guidance_scale
+* pag_guidance_scale if used
+* output_path
+* git_commit
+* dirty_status
+* timestamp
+
+Validation:
+
+* uniform8 has 8 model evaluations
+* uniform10 has 10 model evaluations
+* uniform20 has 20 model evaluations
+* uniform30 has 30 model evaluations
+* uniform40 has 40 model evaluations
+* reference_uniform50 has 50 model evaluations
+* bss10 has 10 evals = base8 + split first/last
+* bss20 has 20 evals = base18 + split first/last
+* bss30 has 30 evals = base28 + split first/last
+* bss40 has 40 evals = base38 + split first/last
+* BSS-T is not equal to uniform-T
+* same prompt / seed / guide scale / resolution across methods
+
+============================================================
+PHASE 4 — Prompt suite
+======================
+
+Create:
+
+`prompt_suites/sana06b_prompt_suite_v1.json`
+
+Use 16 safe fixed prompts.
+
+Purpose:
+
+* T2I cross-modality sanity check
+* not an official benchmark
+* do not cherry-pick after seeing outputs
+
+Prompt categories:
+
+1. simple object
+2. animal
+3. human action
+4. indoor scene
+5. outdoor landscape
+6. high-frequency texture
+7. lighting-heavy scene
+8. text/sign prompt
+9. surreal fantasy
+10. architecture
+11. food/product
+12. close-up macro
+13. reflection/water/glass
+14. complex composition
+15. low-light scene
+16. colorful abstract scene
+
+Also create smoke prompt:
+
+* use official Sana example:
+  `a cyberpunk cat with a neon sign that says "Sana"`
+  or the official repo prompt found during audit.
+
+Use:
+
+* seed = 42 for official smoke if matching README;
+* seed = 0 for prompt suite, unless audit chooses one standard seed;
+* keep fixed across methods.
+
+============================================================
+PHASE 5 — Build manifests
+=========================
+
+Create:
+
+`scripts/make_manifest_sana06b_bds.py`
+
+Create smoke manifest:
+
+`manifests/sana06b_smoke_manifest.csv`
+
+Rows:
+
+* official example prompt
+* uniform8
+* uniform10
+* bss10
+* reference_uniform50
+
+Create mini-suite manifest:
+
+`manifests/sana06b_prompt_suite_manifest.csv`
+
+Rows:
+
+* 16 prompts
+* uniform8
+* uniform10
+* uniform20
+* uniform30
+* uniform40
+* reference_uniform50
+* bss10
+* bss20
+* bss30
+* bss40
+
+This set exactly populates the final cross-model same-compute table:
+
+* Low = 10 NFE
+* Middle Low = 20 NFE
+* Middle High = 30 NFE
+* High = 40 NFE
+
+If runtime is high, allow reduced run:
+
+* uniform8
+* uniform10
+* uniform20
+* uniform40
+* reference_uniform50
+* bss10
+* bss20
+* bss40
+  and mark Middle High as missing.
+
+Manifest fields:
+
+* run_id
+* model_id = Sana-0.6B
+* model_variant = Sana_600M_1024px
+* setting = Image Generation
+* few_step_prior = None / not explicit
+* task = t2i
+* modality = image
+* protocol = fixed_prompt_suite_official_sana_pipeline
+* backend = native / diffusers
+* case_id
+* prompt
+* prompt_hash
+* method
+* method_family = uniform / bss / reference
+* sampler_mode
+* actual_nfe
+* num_inference_steps
+* base_sample_steps
+* split_pairs
+* scheduler_name
+* flow_shift if applicable
+* guidance_scale
+* pag_guidance_scale if used
+* seed
+* height
+* width
+* reference_method = reference_uniform50
+* reference_nfe = 50
+* low_baseline_method = uniform8
+* output_path
+* schedule_json_path
+* stdout_log_path
+* stderr_log_path
+* runtime_json_path
+* status
+* error_message
+* git_commit
+* dirty_status
+
+Default config:
+
+* height = 1024
+* width = 1024
+* guidance_scale = 5.0 if native 0.6B model card route is used
+* pag_guidance_scale = 2.0 if native route supports/uses PAG by default
+* if diffusers SanaPipeline route is used, audit and use official default guidance_scale, likely 4.5 for Sana-1.5 example, but do not assume for 0.6B
+* reference_nfe = 50
+* prompt suite seed = 0
+
+============================================================
+PHASE 6 — Run smoke
+===================
+
+Run only smoke first:
+
+* uniform8
+* uniform10
+* bss10
+* reference_uniform50
+
+After smoke:
+
+* validate outputs exist
+* validate schedule JSONs
+* validate model eval counts
+* validate bss10 schedule
+* compute metrics against reference_uniform50
+* create side-by-side:
+  uniform8 | uniform10 | bss10 | reference50
+
+Write:
+`reports/01_sana06b_smoke_report.md`
+
+If smoke fails:
+
+* stop;
+* report failure;
+* do not run mini-suite.
+
+============================================================
+PHASE 7 — Metrics
+=================
+
+Create:
+
+`scripts/compute_metrics_against_ref.py`
+
+For each prompt/case:
+
+* reference = uniform50
+* low baseline = uniform8
+* compute:
+
+  * RGB L1 to reference
+  * RGB L2 to reference
+  * PSNR to reference
+  * rgb_l1_closure:
+    `1 - d(method, ref) / d(uniform8, ref)`
+  * runtime
+  * actual NFE
+  * compute_fraction = actual_nfe / 50
+
+Optional if easy:
+
+* LPIPS to reference
+* DINO/CLIP image similarity to reference
+  But do not install heavy packages unless already available.
+
+Write:
+
+* `metrics/master_long_metrics.csv`
+* `metrics/per_case_metrics.csv`
+* `metrics/same_compute_gain_long.csv`
+
+For BDS:
+Use exact same-NFE pairs only.
+Do not interpolate.
+Do not create matched-quality saving table.
+
+============================================================
+PHASE 8 — Mini-suite run
+========================
+
+Only after smoke passes, run the 16-prompt fixed suite.
+
+Preferred methods:
+
+* uniform8
+* uniform10
+* uniform20
+* uniform30
+* uniform40
+* reference_uniform50
+* bss10
+* bss20
+* bss30
+* bss40
+
+Use resume support.
+Run one row at a time.
+Dump runtime JSON and schedule JSON for every row.
+Sync output to Drive after each completed row if running in Colab.
+Do not overwrite unless `--force`.
+
+Write:
+`reports/02_mini_suite_run_report.md`
+
+============================================================
+PHASE 9 — BDS calibration / holdout
+===================================
+
+Create:
+
+`scripts/compute_bds.py`
+
+Use fixed prompt suite cases.
+
+Define:
+
+* BDS_low: Tset = {10}
+* BDS_all: Tset = {10,20,30,40} if all points available
+* If 30 missing, use {10,20,40} and mark Middle High missing
+
+Splits:
+
+1. first_half_split:
+
+   * first 8 prompts calibration
+   * last 8 holdout
+2. alternating_split:
+
+   * even-index prompts calibration
+   * odd-index holdout
+3. random_split_seed0:
+
+   * 8/8 split with seed 0
+
+For each split and Tset:
+
+* calibration mean gain
+* bootstrap 95% LCB
+* bootstrap 95% CI
+* calibration win rate
+* predicted verdict:
+
+  * Green if BDS_all LCB > 0
+  * Low-only if BDS_low LCB > 0 and BDS_all LCB <= 0
+  * Reject if BDS_low LCB <= 0
+  * Need more data if calibration intervals too wide
+* holdout mean gain
+* holdout win rate
+* confirmation flags:
+
+  * low_confirmed
+  * all_green_confirmed
+  * low_only_confirmed
+
+Use bootstrap over prompts/cases, not rows.
+
+Outputs:
+
+* `tables/tableA_sana06b_bds_by_split.csv`
+* `tables/tableA_sana06b_bds_by_split.md`
+* `tables/cross_model_bds_row.csv`
+* `tables/cross_model_bds_row.md`
+* `reports/03_bds_report.md`
+
+============================================================
+PHASE 10 — Final cross-model same-compute row
+=============================================
+
+Create:
+
+* `tables/table_cross_model_same_compute_sana06b_row.csv`
+* `tables/table_cross_model_same_compute_sana06b_row.md`
+* `tables/table_cross_model_same_compute_sana06b_row.tex`
+
+The row must match the paper table:
+
+Model | Setting | Few-step prior | Ref. | Cases | BDS | Low | Middle Low | Middle High | High | Mean Δ | Win
+
+For Sana-0.6B:
+
+* Model = Sana-0.6B
+* Setting = Image Generation
+* Few-step prior = None / not explicit
+* Ref. = 50
+* Cases = number of completed prompt cases
+* BDS = Green / Low-only / Reject / Need more data
+* Low = BSS closure / delta at 10 NFE
+* Middle Low = BSS closure / delta at 20 NFE
+* Middle High = BSS closure / delta at 30 NFE
+* High = BSS closure / delta at 40 NFE
+* Mean Δ = average of available delta values
+* Win = BSS win rate over available prompt × NFE same-compute observations
+
+Cell format:
+`0.xxx / +0.xxx [10 NFE]`
+or
+`0.xxx / -0.xxx [40 NFE]`
+
+If a cell is missing:
+
+* write `--`
+* document in final report
+* do not invent/interpolate
+
+============================================================
+PHASE 11 — Figures
+==================
+
+Generate:
+
+* `figures/compute_quality_rgb_closure.png`
+* `figures/compute_quality_rgb_closure.pdf`
+
+Plot:
+
+* x-axis = NFE / reference_nfe
+* y-axis = rgb_l1_closure
+* uniform curve
+* BSS curve
+* mean over prompts
+* SEM if multiple prompts
+
+Generate image grid:
+
+* uniform8 | uniform10 | bss10 | reference50
+* uniform10 | bss10 | uniform20 | bss20 | uniform30 | bss30 | uniform40 | bss40 | reference50 if available
+
+Save:
+
+* `figures/side_by_side/index.html`
+
+============================================================
+PHASE 12 — Final report
+=======================
+
+Create:
+
+`reports/FINAL_SANA06B_BSS_BDS_REPORT.md`
+
+Include:
+
+1. Purpose
+2. Repo/model/hardware audit
+3. Weight location and Drive setup
+4. Backend selected:
+
+   * native Sana pipeline or diffusers pipeline
+   * why
+5. Config selected:
+
+   * exact config YAML
+   * checkpoint path
+   * scheduler name
+   * official/default steps/guidance values
+6. BSS schedule implementation summary
+7. Smoke result
+8. Mini-suite completion summary
+9. Same-compute RGB-L1 closure row
+10. BDS calibration/holdout result
+11. Side-by-side examples
+12. Final verdict:
+
+    * Green / Low-only / Reject / Need more data
+13. Whether this can be included in the cross-model paper table
+14. Caveats:
+
+    * fixed prompt suite, not official benchmark
+    * reference is uniform50, not ground truth
+    * NFE as compute proxy
+    * backend/config mapping for 0.6B must be audited
+    * T2I has stochastic multi-solution behavior
+15. Next steps:
+
+    * Sana-1.5-1.6B if 0.6B is promising
+    * PixArt fallback if Sana integration is too hard
+    * solver-coordinate ablation if mixed
+
+Use cautious wording:
+
+* “Sana-0.6B T2I sanity check”
+* “fixed prompt suite using official Sana code”
+* “same-compute BSS vs uniform”
+* “BDS deployment certificate”
+* “no universal claim”
+
+Do not write:
+
+* “BSS universally works”
+* “BSS reaches official quality”
+* “BSS is guaranteed optimal”
+
+Final response to me should include:
+
+* repo commit
+* Colab notebook path
+* Drive weights path used
+* backend selected
+* config selected
+* GPU audit
+* smoke pass/fail
+* schedule validation summary
+* mini-suite completion count
+* final paper-format row path
+* LaTeX row snippet path
+* BDS table path
+* final report path
+* final verdict
+* recommendation whether Sana-0.6B should be included in the table
+
+Do not push unless asked.
+
+```
+
+几个注意点我建议你保留给 Codex：
+
+1. **0.6B 的 official route 先 audit。** GitHub 性能表明确列了 Sana-0.6B，HF 也有 `Sana_600M_1024px`，但 model card 示例和 config 可能有不一致；prompt 里让 Codex 本地确认 `Sana_600M_img1024.yaml`、checkpoint、pipeline route，避免跑错模型。:contentReference[oaicite:1]{index=1}  
+2. **优先 native Sana pipeline，diffusers 作为 fallback。** 官方 README 的 diffusers quick start 主要示例是 Sana-1.5 1.6B；0.6B 的 HF model card示例是 `app.sana_pipeline.SanaPipeline`。:contentReference[oaicite:2]{index=2}  
+3. **不要用 Sprint。** Sana-Sprint 是 one/few-step distillation，和我们要测普通 0.6B 的 BSS/BDS 不同。Sana 官方 README 也明确把 Sprint 标成 one/few-step generation via sCM distillation。:contentReference[oaicite:3]{index=3}
+```
+
+[1]: https://github.com/NVlabs/Sana "GitHub - NVlabs/Sana: SANA: Efficient High-Resolution Image Synthesis with Linear Diffusion Transformer · GitHub"

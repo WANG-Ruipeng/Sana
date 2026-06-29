@@ -1,0 +1,29 @@
+# Keep code, prompts, notebooks, and small hand-written reports in git.
+# Keep generated experiment artifacts out of git; sync them to Drive instead.
+
+images/
+outputs/
+runtimes/
+
+logs/*
+!logs/.gitkeep
+
+schedules/*.json
+!schedules/.gitkeep
+
+metrics/*.csv
+metrics/*.json
+!metrics/.gitkeep
+
+figures/*.png
+figures/*.pdf
+figures/side_by_side/
+!figures/.gitkeep
+
+__pycache__/
+*.pyc
+scripts/__pycache__/
+
+tables/*.csv
+tables/*.tex
+!tables/.gitkeep

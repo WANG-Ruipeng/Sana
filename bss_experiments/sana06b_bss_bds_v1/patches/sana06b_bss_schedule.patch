@@ -1,0 +1,8 @@
+# No upstream Sana source patch is required for v1.
+#
+# BSS schedule injection is implemented in:
+# bss_experiments/sana06b_bss_bds_v1/scripts/sana06b_adapter.py
+#
+# The adapter patches DPM_Solver.get_time_steps only inside a narrow runtime
+# context while a BSS row is being sampled. Uniform rows call the official
+# native Sana flow_dpm-solver path unchanged.

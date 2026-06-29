@@ -1,0 +1,127 @@
+{
+  "suite_id": "sana06b_prompt_suite_v1",
+  "model_id": "Sana-0.6B",
+  "model_variant": "Sana_600M_1024px",
+  "purpose": "T2I cross-modality BSS/BDS sanity check, not an official benchmark",
+  "selection_rule": "Fixed before model outputs are inspected; do not cherry-pick.",
+  "smoke": {
+    "case_id": "smoke_official",
+    "category": "official smoke",
+    "prompt": "a cyberpunk cat with a neon sign that says \"Sana\"",
+    "seed": 42
+  },
+  "prompts": [
+    {
+      "index": 1,
+      "case_id": "p01_simple_object",
+      "category": "simple object",
+      "prompt": "A matte red ceramic teapot on a plain gray table, studio lighting.",
+      "seed": 0
+    },
+    {
+      "index": 2,
+      "case_id": "p02_animal",
+      "category": "animal",
+      "prompt": "A golden retriever wearing a blue raincoat, sitting beside a puddle after rain.",
+      "seed": 0
+    },
+    {
+      "index": 3,
+      "case_id": "p03_human_action",
+      "category": "human action",
+      "prompt": "A chef tossing vegetables in a wok inside a busy open kitchen.",
+      "seed": 0
+    },
+    {
+      "index": 4,
+      "case_id": "p04_indoor_scene",
+      "category": "indoor scene",
+      "prompt": "A quiet reading room with oak shelves, a green lamp, and a leather chair.",
+      "seed": 0
+    },
+    {
+      "index": 5,
+      "case_id": "p05_outdoor_landscape",
+      "category": "outdoor landscape",
+      "prompt": "A wide alpine valley at sunrise with snow peaks and a winding river.",
+      "seed": 0
+    },
+    {
+      "index": 6,
+      "case_id": "p06_high_frequency_texture",
+      "category": "high-frequency texture",
+      "prompt": "A close view of woven tartan fabric with crisp red and green threads.",
+      "seed": 0
+    },
+    {
+      "index": 7,
+      "case_id": "p07_lighting_heavy",
+      "category": "lighting-heavy scene",
+      "prompt": "A glass greenhouse at dusk filled with warm string lights and mist.",
+      "seed": 0
+    },
+    {
+      "index": 8,
+      "case_id": "p08_text_sign",
+      "category": "text/sign prompt",
+      "prompt": "A storefront sign that clearly says \"SANA LAB\" above a small flower shop.",
+      "seed": 0
+    },
+    {
+      "index": 9,
+      "case_id": "p09_surreal_fantasy",
+      "category": "surreal fantasy",
+      "prompt": "A floating island with tiny waterfalls under two moons, painterly but sharp.",
+      "seed": 0
+    },
+    {
+      "index": 10,
+      "case_id": "p10_architecture",
+      "category": "architecture",
+      "prompt": "A modern concrete library with tall arches, reflected in polished black stone.",
+      "seed": 0
+    },
+    {
+      "index": 11,
+      "case_id": "p11_food_product",
+      "category": "food/product",
+      "prompt": "A glossy product photo of a lemon tart on a white plate with mint garnish.",
+      "seed": 0
+    },
+    {
+      "index": 12,
+      "case_id": "p12_macro",
+      "category": "close-up macro",
+      "prompt": "A macro photograph of a dew-covered blue butterfly wing with fine detail.",
+      "seed": 0
+    },
+    {
+      "index": 13,
+      "case_id": "p13_reflection",
+      "category": "reflection/water/glass",
+      "prompt": "A sailboat reflected in still water beside a transparent glass pier.",
+      "seed": 0
+    },
+    {
+      "index": 14,
+      "case_id": "p14_complex_composition",
+      "category": "complex composition",
+      "prompt": "A market square with cyclists, umbrellas, fruit stands, and distant tram lines.",
+      "seed": 0
+    },
+    {
+      "index": 15,
+      "case_id": "p15_low_light",
+      "category": "low-light scene",
+      "prompt": "A low-light jazz club with a saxophonist under a narrow amber spotlight.",
+      "seed": 0
+    },
+    {
+      "index": 16,
+      "case_id": "p16_colorful_abstract",
+      "category": "colorful abstract scene",
+      "prompt": "An abstract burst of cyan, magenta, yellow, and black ink in clear water.",
+      "seed": 0
+    }
+  ]
+}
