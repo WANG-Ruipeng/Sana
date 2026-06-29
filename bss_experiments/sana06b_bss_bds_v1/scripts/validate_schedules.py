@@ -43,7 +43,9 @@ def main() -> None:
     failed = [name for name, payload in checks.items() if not payload["pass"]]
     text = json.dumps({"checks": checks, "failed": failed}, indent=2)
     if args.output:
-        Path(args.output).write_text(text + "\n", encoding="utf-8")
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(text + "\n", encoding="utf-8")
     print(text)
     if failed:
         raise SystemExit(1)
